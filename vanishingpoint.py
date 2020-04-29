@@ -3,13 +3,18 @@
 import numpy as np
 import cv2 as cv # for drawing
 
-np.set_printoptions(precision=4, linewidth=140)
+np.set_printoptions(precision=4, linewidth=140, suppress=True)
 
 # https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/lookat-function
 
-# x right
-# y up
-# z towards you
+# screen:
+#  x right
+#  y up
+#  z towards you
+# world:
+#  x right
+#  y away
+#  z up
 
 # geometry
 
@@ -18,6 +23,9 @@ def to_projective(matrix):
 
 def project(matrix):
 	return np.array(matrix[0:3] / matrix[3])
+
+def identity():
+	return np.matrix(np.eye(4))
 
 def translate(arg=None, x=None, y=None, z=None):
 	if arg is not None:
@@ -52,16 +60,27 @@ def normalize(v):
 	return v / np.linalg.norm(v[:3])
 
 def lookat(pfrom, pto, up):
+	if isinstance(pfrom, (list, tuple)):
+		pfrom = np.matrix(pfrom).T
+
+	if isinstance(pto, (list, tuple)):
+		pto = np.matrix(pto).T
+
+	if isinstance(up, (list, tuple)):
+		up = np.matrix(up).T
+
 	# https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/lookat-function
 	forward = normalize(pfrom - pto) # towards camera
-	right = crossproduct(up, forward)
-	up = crossproduct(right, forward)
-	result = np.matrix(np.eye(4))
-	result[:3,0] = right
-	result[:3,1] = up
-	result[:3,2] = forward
-	result[:3,3] = pfrom
-	return result
+	right = normalize(crossproduct(up, forward))
+	up = normalize(crossproduct(forward, right))
+	cam2world = np.matrix(np.eye(4))
+	cam2world[:3,0] = right
+	cam2world[:3,1] = up
+	cam2world[:3,2] = forward
+	cam2world[:3,3] = pfrom
+
+	world2cam = cam2world ** -1
+	return world2cam
 
 
 def create_canvas(screensize):
@@ -76,6 +95,7 @@ def draw_vertices(canvas, V, Vc):
 	shift = 4
 	for v,vc in zip(V, Vc):
 		if np.isnan(v).any():
+			print("isnan", v)
 			continue
 
 		#if vertex[2] >= -1: continue # wrong side of the image plane
@@ -155,12 +175,12 @@ triad = (
 		( ( 0,  0,  1, 1), (255,   0,   0) ),
 
 		# vanishing points
-		( ( 0,  0, -1, 0), (255, 255,   0) ),
 		( ( 0,  0, +1, 0), (  0,   0, 255) ),
-		( ( 0, -1,  0, 0), (255,   0, 255) ),
+		( ( 0,  0, -1, 0), (255, 255,   0) ),
 		( ( 0, +1,  0, 0), (  0, 255,   0) ),
-		( (-1,  0,  0, 0), (  0, 255, 255) ),
+		( ( 0, -1,  0, 0), (255,   0, 255) ),
 		( (+1,  0,  0, 0), (255,   0,   0) ),
+		( (-1,  0,  0, 0), (  0, 255, 255) ),
 	],
 	[ # lines
 		( (0, 1), (  0,   0, 255) ),
@@ -206,7 +226,7 @@ box = (
 	[ # triangles
 	],
 	# world <- object transformation
-	translate([2, 0, 2])
+	translate([2, 2, 2])
 )
 
 
@@ -215,20 +235,25 @@ objects = [
 	box
 ]
 
-screensize = (800, 600)
+screensize = (1024, 1024)
+#screensize = (640, 480)
 
-cv.namedWindow("canvas")
+cv.namedWindow("canvas", cv.WINDOW_OPENGL)
+#cv.resizeWindow("canvas", screensize)
+
 
 uivars = {}
 
 def create_var(varname, vmin, vmax, vstep, vdefault):
 	uivars[varname] = vdefault
+	globals()[varname] = vdefault
 	irange = int(round((vmax-vmin) / vstep))
 	idefault = int(round((vdefault - vmin) / vstep))
 
 	def callback(newvalue):
 		val = vmin + newvalue * vstep
 		uivars[varname] = val
+		globals()[varname] = val
 		print(f"{varname} = {val:.3g}")
 
 		render()
@@ -237,11 +262,11 @@ def create_var(varname, vmin, vmax, vstep, vdefault):
 	return callback
 
 
-create_var("lookat_tx", -10, +10, 0.1, 0)
-create_var("lookat_ty", -10, +10, 0.1, 0)
-create_var("lookat_tz", -10, +10, 0.1, -2)
-create_var("lookat_rx", -45, +45, 1, 0)
-create_var("lookat_ry", -45, +45, 1, 0)
+create_var("lookat_tx", -10, +10, 0.1, 5)
+create_var("lookat_ty", -10, +10, 0.1, 5)
+create_var("lookat_tz", -10, +10, 0.1, 5)
+#create_var("lookat_rx", -45, +45, 1, 0)
+#create_var("lookat_ry", -45, +45, 1, 0)
 
 def render():
 	global points
@@ -254,22 +279,14 @@ def render():
 
 	# screen plane <- camera plane
 	w,h = screensize
-	Screen = translate([w/2, h/2, 0]) * scale(h/2, -h/2, 1)
+	Screen = translate([w/2, h/2, 0]) * scale(h/2, -h/2, 1) # h/2 ~ 90 degrees
 	Projection = Screen * Projection
 
 	# view <- world
-	View = np.matrix(np.eye(4))
-	#View = rotate((1,0,0), +10) * View
-	View = translate(
-		x=uivars['lookat_tx'],
-		y=uivars['lookat_ty'],
-		z=uivars['lookat_tz'],
-	) * View
-	View = rotate((0,1,0), uivars['lookat_ry']) * View
-	View = rotate((1,0,0), uivars['lookat_rx']) * View
-	#View = View**-1
-
-	#View = lookat()
+	View = identity()
+	#View *= rotate((1,0,0), lookat_rx) # tilt
+	#View *= rotate((0,1,0), lookat_ry) # pan... relative to frame looking at origin
+	View *= lookat(pfrom=(lookat_tx, lookat_ty, lookat_tz), pto=(1,1,1), up=(0,0,1))
 
 	PV = Projection * View
 
