@@ -5,18 +5,15 @@ import cv2 as cv # for drawing
 
 np.set_printoptions(precision=4, linewidth=140, suppress=True)
 
-# https://www.scratchapixel.com/lessons/mathematics-physics-for-computer-graphics/lookat-function
-
 # screen:
 #  x right
 #  y up
 #  z towards you
+
 # world:
 #  x right
 #  y away
 #  z up
-
-# geometry
 
 def to_projective(matrix):
 	return np.column_stack(np.broadcast(*matrix, 1))
@@ -98,7 +95,9 @@ def draw_vertices(canvas, V, Vc):
 			print("isnan", v)
 			continue
 
-		#if vertex[2] >= -1: continue # wrong side of the image plane
+		#if v[2] >= 0: continue # wrong side of the image plane
+
+		if np.isinf(v).any(): continue
 
 		center = (
 			int(v[0] * 2**shift),
@@ -145,6 +144,8 @@ def draw_object(canvas, PV, obj):
 
 	V = PV * M * np.matrix(V).T
 	V = project(V).T
+
+	#print(V)
 
 	if len(T) > 0:
 		T,Tc = zip(*T)
@@ -238,7 +239,7 @@ objects = [
 screensize = (1024, 1024)
 #screensize = (640, 480)
 
-cv.namedWindow("canvas", cv.WINDOW_OPENGL)
+cv.namedWindow("canvas") #, cv.WINDOW_OPENGL)
 #cv.resizeWindow("canvas", screensize)
 
 
@@ -276,11 +277,15 @@ def render():
 	Projection = np.matrix(np.eye(4))
 	Projection[3,:] = 0
 	Projection[3,2] = -1 # project onto z=-1, which is away from the camera plane
+	#Projection[2,3] = -1
+	# TODO: http://learnwebgl.brown37.net/08_projections/projections_perspective.html
 
 	# screen plane <- camera plane
 	w,h = screensize
 	Screen = translate([w/2, h/2, 0]) * scale(h/2, -h/2, 1) # h/2 ~ 90 degrees
 	Projection = Screen * Projection
+
+	#import pdb; pdb.set_trace()
 
 	# view <- world
 	View = identity()
